@@ -1,0 +1,14 @@
+# CERTcrack.py dependencies
+typing-extensions>=4.0.0  # For enhanced type hints
+
+# Note: The following system dependencies are required but not Python packages.
+# They must be installed separately on your system:
+#
+# 1. OpenSSL - Required for certificate operations
+#    Windows: https://slproweb.com/products/Win32OpenSSL.html
+#    Linux:   sudo apt-get install openssl
+#    macOS:   brew install openssl
+#
+# 2. Java Runtime Environment (JRE) - Required for JKS/keystore operations
+#    Download from: https://www.oracle.com/java/technologies/downloads/
+#    or use OpenJDK: https://adoptium.net/ 
