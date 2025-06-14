@@ -127,6 +127,9 @@ def try_password(cert_path: Path, password: str) -> bool:
                     print(f"Password: {password}")
                     print(f"Decrypted file created at: {output_path}")
                     return True
+                # Delete the output file if password attempt failed
+                if output_path.exists():
+                    output_path.unlink()
             finally:
                 # Clean up temporary file
                 try:
@@ -162,10 +165,17 @@ def try_password(cert_path: Path, password: str) -> bool:
             print(f"Password: {password}")
             print(f"Decrypted file created at: {output_path}")
             return True
+        
+        # Delete the output file if password attempt failed
+        if output_path.exists():
+            output_path.unlink()
             
         return False
         
     except Exception as e:
+        # Delete the output file if an error occurred
+        if output_path.exists():
+            output_path.unlink()
         print(f"Error processing {cert_path}: {str(e)}")
         return False
 
