@@ -47,6 +47,9 @@ python CERTcrack.py -d /path/to/certs -p /path/to/passwords.txt
 - `-t, --types`: Comma-separated list of certificate types to scan (optional)
   - Default: pfx,p12,jks,keystore
   - Additional options: key,pem
+- `-q, --quiet`: Enable quiet mode for faster operation (optional)
+  - Suppresses password attempt output
+  - Useful for large password lists or when running in background
 
 ### Examples
 
@@ -68,6 +71,16 @@ python CERTcrack.py -d ./certificates -p ./passwords.txt -t key,pem
 4. Search only for Java keystores:
 ```bash
 python CERTcrack.py -d ./certificates -p ./passwords.txt -t jks,keystore
+```
+
+5. Run in quiet mode for faster operation:
+```bash
+python CERTcrack.py -d ./certificates -p ./passwords.txt -q
+```
+
+6. Combine options:
+```bash
+python CERTcrack.py -d ./certificates -p ./passwords.txt -t pfx,key -q
 ```
 
 ## Output

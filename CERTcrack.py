@@ -184,6 +184,7 @@ def main():
     parser.add_argument('-d', '--directory', required=True, help='Directory to scan for certificate files')
     parser.add_argument('-p', '--password-list', required=True, help='Path to file containing passwords to try')
     parser.add_argument('-t', '--types', help='Comma-separated list of certificate types to scan (default: pfx,p12,jks,keystore). Use "key" or "pem" to include encrypted key files.')
+    parser.add_argument('-q', '--quiet', action='store_true', help='Quiet mode - suppress password attempt output for faster operation')
     args = parser.parse_args()
     
     # Validate directory
@@ -253,19 +254,26 @@ def main():
     # Try each certificate file
     cracked_count = 0
     for cert_path in cert_files:
-        print(f"\nTrying certificate file: {cert_path}")
+        if not args.quiet:
+            print(f"\nTrying certificate file: {cert_path}")
+        else:
+            print(f"\nProcessing: {cert_path}")
         
         # Try each password
         for password in passwords:
-            # Clear the line and print new password attempt
-            print(f"\033[K", end='')  # ANSI escape sequence to clear the line
-            print(f"Trying password: {password}", end='\r')
+            if not args.quiet:
+                # Clear the line and print new password attempt
+                print(f"\033[K", end='')  # ANSI escape sequence to clear the line
+                print(f"Trying password: {password}", end='\r')
             if try_password(cert_path, password):
                 cracked_count += 1
                 # Stop trying passwords for this certificate file
                 break
         else:
-            print(f"\nNo password found for {cert_path}")
+            if not args.quiet:
+                print(f"\nNo password found for {cert_path}")
+            else:
+                print(f" - No password found")
             
     print(f"\nScan complete! {cracked_count} out of {len(cert_files)} certificate files were cracked.")
     print()  # Add extra newline at the end
