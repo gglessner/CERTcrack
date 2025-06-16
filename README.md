@@ -96,10 +96,13 @@ The script will:
    - Valid from date
    - Valid until date
    - Days remaining (for valid certificates)
+   - Certificate type (End-Entity or CA)
 7. Provide a summary of cracked files at the end, including:
    - Total number of certificates cracked
    - Number of valid certificates
    - Number of expired certificates
+
+Note: The script prioritizes end-entity certificates (client certificates used for authentication) over CA certificates when multiple certificates are present in a keystore. This ensures that the validity information shown is for the actual certificate being used for authentication rather than its CA certificate.
 
 ## Password List Format
 

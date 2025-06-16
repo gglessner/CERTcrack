@@ -100,66 +100,232 @@ def find_cert_files(directory: str) -> List[Path]:
 def get_cert_info(cert_path: Path, password: str) -> Dict[str, str]:
     """
     Extract certificate information including validity dates.
-    Returns a dictionary containing certificate details.
+    Returns a dictionary containing certificate details for the end-entity certificate.
     """
     try:
         # Handle different file types
-        if cert_path.suffix.lower() in {'.pfx', '.p12'}:
-            # Extract certificate from PKCS#12
+        if cert_path.suffix.lower() in {'.jks', '.keystore'}:
+            # Use keytool for JKS files
+            cmd = [
+                'keytool',
+                '-list',
+                '-v',
+                '-keystore', str(cert_path),
+                '-storepass', password
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                return {"error": "Failed to extract certificate information"}
+            
+            # Parse keytool output to find all certificates
+            cert_text = result.stdout
+            certs_info = []
+            
+            # Find all certificate entries
+            cert_entries = re.finditer(r'Certificate\[(\d+)\]:\n(.*?)(?=Certificate\[\d+\]:|$)', cert_text, re.DOTALL)
+            
+            for cert_entry in cert_entries:
+                cert_block = cert_entry.group(2)
+                # Extract validity dates
+                valid_from = re.search(r'Valid from: (.+) until:', cert_block)
+                valid_until = re.search(r'until: (.+)', cert_block)
+                
+                if valid_from and valid_until:
+                    try:
+                        from_date = datetime.strptime(valid_from.group(1).strip(), '%a %b %d %H:%M:%S %Z %Y')
+                        until_date = datetime.strptime(valid_until.group(1).strip(), '%a %b %d %H:%M:%S %Z %Y')
+                        current_date = datetime.now()
+                        
+                        is_valid = current_date <= until_date
+                        days_remaining = (until_date - current_date).days if is_valid else 0
+                        
+                        # Get certificate alias and key usage
+                        alias_match = re.search(r'Alias name: (.+)', cert_block)
+                        alias = alias_match.group(1) if alias_match else f"Certificate {cert_entry.group(1)}"
+                        
+                        # Check if this is an end-entity certificate
+                        # Look for key usage that indicates end-entity cert
+                        is_ca = False
+                        is_end_entity = False
+                        
+                        # Check for CA usage
+                        if re.search(r'Certificate is a CA', cert_block):
+                            is_ca = True
+                        
+                        # Check for end-entity usage
+                        if re.search(r'DigitalSignature|KeyEncipherment|KeyAgreement', cert_block):
+                            is_end_entity = True
+                        
+                        certs_info.append({
+                            "alias": alias,
+                            "not_before": from_date.strftime('%Y-%m-%d %H:%M:%S'),
+                            "not_after": until_date.strftime('%Y-%m-%d %H:%M:%S'),
+                            "is_valid": is_valid,
+                            "days_remaining": days_remaining,
+                            "is_ca": is_ca,
+                            "is_end_entity": is_end_entity
+                        })
+                    except ValueError as e:
+                        print(f"Warning: Could not parse dates for {alias}: {str(e)}")
+                        continue
+            
+            if not certs_info:
+                return {"error": "No valid certificates found"}
+            
+            # First try to find an end-entity certificate
+            end_entity_certs = [cert for cert in certs_info if cert["is_end_entity"] and not cert["is_ca"]]
+            if end_entity_certs:
+                # If we found end-entity certs, return the one with the most days remaining
+                return max(end_entity_certs, key=lambda x: x["days_remaining"])
+            
+            # If no end-entity certs found, return the first non-CA cert
+            non_ca_certs = [cert for cert in certs_info if not cert["is_ca"]]
+            if non_ca_certs:
+                return max(non_ca_certs, key=lambda x: x["days_remaining"])
+            
+            # If all certs are CAs, return the one with the most days remaining
+            return max(certs_info, key=lambda x: x["days_remaining"])
+            
+        elif cert_path.suffix.lower() in {'.pfx', '.p12'}:
+            # Use OpenSSL for PKCS#12 files
+            # First get all certificates
             cmd = [
                 'openssl', 'pkcs12',
                 '-in', str(cert_path),
-                '-clcerts',
-                '-nokeys',
+                '-clcerts',  # Get client certificates
+                '-nokeys',   # Don't include private keys
                 '-passin', f'pass:{password}'
             ]
-        elif cert_path.suffix.lower() in {'.jks', '.keystore'}:
-            # For JKS files, we need to convert to PKCS#12 first
-            success, temp_p12 = convert_jks_to_p12(cert_path, password)
-            if not success:
-                return {"error": "Failed to convert JKS to PKCS#12"}
-            cmd = [
-                'openssl', 'pkcs12',
-                '-in', str(temp_p12),
-                '-clcerts',
-                '-nokeys',
-                '-passin', f'pass:{password}'
-            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                return {"error": "Failed to extract certificate information"}
+            
+            # Split the output into individual certificates
+            cert_blocks = re.split(r'-----BEGIN CERTIFICATE-----', result.stdout)
+            certs_info = []
+            
+            for cert_block in cert_blocks[1:]:  # Skip the first empty split
+                # Reconstruct the certificate
+                cert_pem = "-----BEGIN CERTIFICATE-----" + cert_block
+                
+                # Get certificate info using x509
+                x509_cmd = [
+                    'openssl', 'x509',
+                    '-noout',
+                    '-text',
+                    '-in', '-'
+                ]
+                x509_result = subprocess.run(x509_cmd, input=cert_pem.encode(), capture_output=True, text=True)
+                
+                if x509_result.returncode == 0:
+                    cert_text = x509_result.stdout
+                    not_before = re.search(r'Not Before: (.+)', cert_text)
+                    not_after = re.search(r'Not After : (.+)', cert_text)
+                    
+                    if not_before and not_after:
+                        try:
+                            not_before_date = datetime.strptime(not_before.group(1).strip(), '%b %d %H:%M:%S %Y %Z')
+                            not_after_date = datetime.strptime(not_after.group(1).strip(), '%b %d %H:%M:%S %Y %Z')
+                            current_date = datetime.now()
+                            
+                            is_valid = current_date <= not_after_date
+                            days_remaining = (not_after_date - current_date).days if is_valid else 0
+                            
+                            # Try to get subject as identifier
+                            subject = re.search(r'Subject: (.+)', cert_text)
+                            alias = subject.group(1) if subject else f"Certificate {len(certs_info) + 1}"
+                            
+                            # Check if this is an end-entity certificate
+                            is_ca = False
+                            is_end_entity = False
+                            
+                            # Check for CA usage
+                            if re.search(r'CA:TRUE', cert_text):
+                                is_ca = True
+                            
+                            # Check for end-entity usage
+                            if re.search(r'Digital Signature|Key Encipherment|Key Agreement', cert_text):
+                                is_end_entity = True
+                            
+                            certs_info.append({
+                                "alias": alias,
+                                "not_before": not_before_date.strftime('%Y-%m-%d %H:%M:%S'),
+                                "not_after": not_after_date.strftime('%Y-%m-%d %H:%M:%S'),
+                                "is_valid": is_valid,
+                                "days_remaining": days_remaining,
+                                "is_ca": is_ca,
+                                "is_end_entity": is_end_entity
+                            })
+                        except ValueError as e:
+                            print(f"Warning: Could not parse dates for certificate: {str(e)}")
+                            continue
+            
+            if not certs_info:
+                return {"error": "No valid certificates found"}
+            
+            # First try to find an end-entity certificate
+            end_entity_certs = [cert for cert in certs_info if cert["is_end_entity"] and not cert["is_ca"]]
+            if end_entity_certs:
+                # If we found end-entity certs, return the one with the most days remaining
+                return max(end_entity_certs, key=lambda x: x["days_remaining"])
+            
+            # If no end-entity certs found, return the first non-CA cert
+            non_ca_certs = [cert for cert in certs_info if not cert["is_ca"]]
+            if non_ca_certs:
+                return max(non_ca_certs, key=lambda x: x["days_remaining"])
+            
+            # If all certs are CAs, return the one with the most days remaining
+            return max(certs_info, key=lambda x: x["days_remaining"])
+            
         else:
-            # For other file types, assume it's a certificate
+            # For other file types (like .key or .pem), try to find matching certificate
+            cert_path_possible = cert_path.with_suffix('.crt')
+            if not cert_path_possible.exists():
+                cert_path_possible = cert_path.with_suffix('.cer')
+            if not cert_path_possible.exists():
+                return {"error": "No matching certificate file found"}
+            
+            # Use OpenSSL x509 for the certificate
             cmd = [
                 'openssl', 'x509',
-                '-in', str(cert_path),
+                '-in', str(cert_path_possible),
                 '-noout',
                 '-text'
             ]
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        if result.returncode != 0:
-            return {"error": "Failed to extract certificate information"}
-
-        # Extract validity dates
-        cert_text = result.stdout
-        not_before = re.search(r'Not Before: (.+)', cert_text)
-        not_after = re.search(r'Not After : (.+)', cert_text)
-        
-        if not_before and not_after:
-            not_before_date = datetime.strptime(not_before.group(1).strip(), '%b %d %H:%M:%S %Y %Z')
-            not_after_date = datetime.strptime(not_after.group(1).strip(), '%b %d %H:%M:%S %Y %Z')
-            current_date = datetime.now()
+            result = subprocess.run(cmd, capture_output=True, text=True)
             
-            is_valid = current_date <= not_after_date
-            days_remaining = (not_after_date - current_date).days if is_valid else 0
+            if result.returncode != 0:
+                return {"error": "Failed to extract certificate information"}
             
-            return {
-                "not_before": not_before_date.strftime('%Y-%m-%d %H:%M:%S'),
-                "not_after": not_after_date.strftime('%Y-%m-%d %H:%M:%S'),
-                "is_valid": is_valid,
-                "days_remaining": days_remaining
-            }
-        
-        return {"error": "Could not find validity dates in certificate"}
+            cert_text = result.stdout
+            not_before = re.search(r'Not Before: (.+)', cert_text)
+            not_after = re.search(r'Not After : (.+)', cert_text)
+            
+            if not_before and not_after:
+                not_before_date = datetime.strptime(not_before.group(1).strip(), '%b %d %H:%M:%S %Y %Z')
+                not_after_date = datetime.strptime(not_after.group(1).strip(), '%b %d %H:%M:%S %Y %Z')
+                current_date = datetime.now()
+                
+                is_valid = current_date <= not_after_date
+                days_remaining = (not_after_date - current_date).days if is_valid else 0
+                
+                # Check if this is an end-entity certificate
+                is_ca = bool(re.search(r'CA:TRUE', cert_text))
+                is_end_entity = bool(re.search(r'Digital Signature|Key Encipherment|Key Agreement', cert_text))
+                
+                return {
+                    "alias": cert_path_possible.name,
+                    "not_before": not_before_date.strftime('%Y-%m-%d %H:%M:%S'),
+                    "not_after": not_after_date.strftime('%Y-%m-%d %H:%M:%S'),
+                    "is_valid": is_valid,
+                    "days_remaining": days_remaining,
+                    "is_ca": is_ca,
+                    "is_end_entity": is_end_entity
+                }
+            
+            return {"error": "Could not find validity dates in certificate"}
         
     except Exception as e:
         return {"error": f"Error processing certificate: {str(e)}"}
