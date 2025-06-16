@@ -217,7 +217,9 @@ def get_cert_info(cert_path: Path, password: str) -> Dict[str, str]:
                     '-text',
                     '-in', '-'
                 ]
-                x509_result = subprocess.run(x509_cmd, input=cert_pem.encode(), capture_output=True, text=True)
+                # Convert cert_pem to bytes if it's a string
+                cert_input = cert_pem.encode() if isinstance(cert_pem, str) else cert_pem
+                x509_result = subprocess.run(x509_cmd, input=cert_input, capture_output=True, text=True)
                 
                 if x509_result.returncode == 0:
                     cert_text = x509_result.stdout
