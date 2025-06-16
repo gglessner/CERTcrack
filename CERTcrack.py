@@ -185,16 +185,15 @@ def try_password(cert_path: Path, password: str) -> bool:
             success, temp_p12 = convert_jks_to_p12(cert_path, password)
             if not success:
                 return False
-            # If conversion succeeded, try to extract the private key
+            # If conversion succeeded, try to extract the private key and certificates
             cert_path = temp_p12
             try:
-                # Use OpenSSL to extract private key from the converted PKCS#12
+                # Use OpenSSL to extract both private key and certificates from the converted PKCS#12
                 cmd = [
                     'openssl', 'pkcs12',
                     '-in', str(cert_path),
                     '-out', str(output_path),
-                    '-nodes',
-                    '-nocerts',
+                    '-nodes',  # Don't encrypt the private key in the output
                     '-passin', f'pass:{password}'
                 ]
                 result = subprocess.run(cmd, capture_output=True, text=True)
@@ -230,25 +229,43 @@ def try_password(cert_path: Path, password: str) -> bool:
         
         # Handle other file types
         if cert_path.suffix.lower() in {'.pfx', '.p12'}:
-            # PKCS#12 format
+            # PKCS#12 format - extract both private key and certificates
             cmd = [
                 'openssl', 'pkcs12',
                 '-in', str(cert_path),
                 '-out', str(output_path),
-                '-nodes',
-                '-nocerts',
+                '-nodes',  # Don't encrypt the private key in the output
                 '-passin', f'pass:{password}'
             ]
         else:
-            # For encrypted .key and .pem files
+            # For encrypted .key and .pem files, we need to get the certificate separately
+            # First extract the private key
             cmd = [
                 'openssl', 'rsa',
                 '-in', str(cert_path),
                 '-out', str(output_path),
                 '-passin', f'pass:{password}'
             ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                # Try to find and append the corresponding certificate
+                cert_path_possible = cert_path.with_suffix('.crt')
+                if cert_path_possible.exists():
+                    with open(cert_path_possible, 'r') as cert_file:
+                        with open(output_path, 'a') as out_file:
+                            out_file.write('\n')
+                            out_file.write(cert_file.read())
+                else:
+                    # If no .crt file, try .cer
+                    cert_path_possible = cert_path.with_suffix('.cer')
+                    if cert_path_possible.exists():
+                        with open(cert_path_possible, 'r') as cert_file:
+                            with open(output_path, 'a') as out_file:
+                                out_file.write('\n')
+                                out_file.write(cert_file.read())
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        if cert_path.suffix.lower() not in {'.key', '.pem'}:  # Skip for .key/.pem as we already ran the command
+            result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode == 0:
             # Get certificate information
