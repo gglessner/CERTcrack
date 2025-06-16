@@ -91,7 +91,12 @@ The script will:
 3. Attempt to crack each file using the provided password list
 4. Print progress in real-time
 5. Create decrypted files with the extension `.decrypted.pem` when successful
-6. Provide a summary of cracked files at the end
+6. For successfully cracked certificates, display:
+   - Certificate status (Valid/EXPIRED)
+   - Valid from date
+   - Valid until date
+   - Days remaining (for valid certificates)
+7. Provide a summary of cracked files at the end
 
 ## Password List Format
 

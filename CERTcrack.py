@@ -23,7 +23,9 @@ import argparse
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple, Dict
+from datetime import datetime
+import re
 
 # Supported certificate file extensions
 CERT_EXTENSIONS = {'.pfx', '.p12', '.jks', '.keystore'}  # Added .keystore as alternative to .jks
@@ -95,6 +97,80 @@ def find_cert_files(directory: str) -> List[Path]:
     
     return cert_files
 
+def get_cert_info(cert_path: Path, password: str) -> Dict[str, str]:
+    """
+    Extract certificate information including validity dates.
+    Returns a dictionary containing certificate details.
+    """
+    try:
+        # Handle different file types
+        if cert_path.suffix.lower() in {'.pfx', '.p12'}:
+            # Extract certificate from PKCS#12
+            cmd = [
+                'openssl', 'pkcs12',
+                '-in', str(cert_path),
+                '-clcerts',
+                '-nokeys',
+                '-passin', f'pass:{password}'
+            ]
+        elif cert_path.suffix.lower() in {'.jks', '.keystore'}:
+            # For JKS files, we need to convert to PKCS#12 first
+            success, temp_p12 = convert_jks_to_p12(cert_path, password)
+            if not success:
+                return {"error": "Failed to convert JKS to PKCS#12"}
+            cmd = [
+                'openssl', 'pkcs12',
+                '-in', str(temp_p12),
+                '-clcerts',
+                '-nokeys',
+                '-passin', f'pass:{password}'
+            ]
+        else:
+            # For other file types, assume it's a certificate
+            cmd = [
+                'openssl', 'x509',
+                '-in', str(cert_path),
+                '-noout',
+                '-text'
+            ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            return {"error": "Failed to extract certificate information"}
+
+        # Extract validity dates
+        cert_text = result.stdout
+        not_before = re.search(r'Not Before: (.+)', cert_text)
+        not_after = re.search(r'Not After : (.+)', cert_text)
+        
+        if not_before and not_after:
+            not_before_date = datetime.strptime(not_before.group(1).strip(), '%b %d %H:%M:%S %Y %Z')
+            not_after_date = datetime.strptime(not_after.group(1).strip(), '%b %d %H:%M:%S %Y %Z')
+            current_date = datetime.now()
+            
+            is_valid = current_date <= not_after_date
+            days_remaining = (not_after_date - current_date).days if is_valid else 0
+            
+            return {
+                "not_before": not_before_date.strftime('%Y-%m-%d %H:%M:%S'),
+                "not_after": not_after_date.strftime('%Y-%m-%d %H:%M:%S'),
+                "is_valid": is_valid,
+                "days_remaining": days_remaining
+            }
+        
+        return {"error": "Could not find validity dates in certificate"}
+        
+    except Exception as e:
+        return {"error": f"Error processing certificate: {str(e)}"}
+    finally:
+        # Clean up temporary file if it was created
+        if cert_path.suffix.lower() in {'.jks', '.keystore'} and 'temp_p12' in locals():
+            try:
+                os.remove(temp_p12)
+            except:
+                pass
+
 def try_password(cert_path: Path, password: str) -> bool:
     """
     Try to decrypt the certificate file using the given password.
@@ -123,9 +199,23 @@ def try_password(cert_path: Path, password: str) -> bool:
                 ]
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 if result.returncode == 0:
+                    # Get certificate information
+                    cert_info = get_cert_info(cert_path, password)
                     print(f"\nSuccess! Password found for {cert_path}")
                     print(f"Password: {password}")
                     print(f"Decrypted file created at: {output_path}")
+                    
+                    # Print certificate validity information
+                    if "error" in cert_info:
+                        print(f"Certificate info: {cert_info['error']}")
+                    else:
+                        status = "Valid" if cert_info["is_valid"] else "EXPIRED"
+                        print(f"Certificate Status: {status}")
+                        print(f"Valid from: {cert_info['not_before']}")
+                        print(f"Valid until: {cert_info['not_after']}")
+                        if cert_info["is_valid"]:
+                            print(f"Days remaining: {cert_info['days_remaining']}")
+                    
                     return True
                 # Delete the output file if password attempt failed
                 if output_path.exists():
@@ -161,9 +251,23 @@ def try_password(cert_path: Path, password: str) -> bool:
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode == 0:
+            # Get certificate information
+            cert_info = get_cert_info(cert_path, password)
             print(f"\nSuccess! Password found for {cert_path}")
             print(f"Password: {password}")
             print(f"Decrypted file created at: {output_path}")
+            
+            # Print certificate validity information
+            if "error" in cert_info:
+                print(f"Certificate info: {cert_info['error']}")
+            else:
+                status = "Valid" if cert_info["is_valid"] else "EXPIRED"
+                print(f"Certificate Status: {status}")
+                print(f"Valid from: {cert_info['not_before']}")
+                print(f"Valid until: {cert_info['not_after']}")
+                if cert_info["is_valid"]:
+                    print(f"Days remaining: {cert_info['days_remaining']}")
+            
             return True
         
         # Delete the output file if password attempt failed
