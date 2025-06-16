@@ -96,7 +96,10 @@ The script will:
    - Valid from date
    - Valid until date
    - Days remaining (for valid certificates)
-7. Provide a summary of cracked files at the end
+7. Provide a summary of cracked files at the end, including:
+   - Total number of certificates cracked
+   - Number of valid certificates
+   - Number of expired certificates
 
 ## Password List Format
 

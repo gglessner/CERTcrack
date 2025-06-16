@@ -357,6 +357,8 @@ def main():
     
     # Try each certificate file
     cracked_count = 0
+    valid_certs = 0
+    expired_certs = 0
     for cert_path in cert_files:
         if not args.quiet:
             print(f"\nTrying certificate file: {cert_path}")
@@ -371,6 +373,13 @@ def main():
                 print(f"Trying password: {password}", end='\r')
             if try_password(cert_path, password):
                 cracked_count += 1
+                # Get certificate info to track validity
+                cert_info = get_cert_info(cert_path, password)
+                if "error" not in cert_info:
+                    if cert_info["is_valid"]:
+                        valid_certs += 1
+                    else:
+                        expired_certs += 1
                 # Stop trying passwords for this certificate file
                 break
         else:
@@ -380,6 +389,10 @@ def main():
                 print(f" - No password found")
             
     print(f"\nScan complete! {cracked_count} out of {len(cert_files)} certificate files were cracked.")
+    if cracked_count > 0:
+        print(f"Certificate validity summary:")
+        print(f"  - Valid certificates: {valid_certs}")
+        print(f"  - Expired certificates: {expired_certs}")
     print()  # Add extra newline at the end
 
 if __name__ == "__main__":
